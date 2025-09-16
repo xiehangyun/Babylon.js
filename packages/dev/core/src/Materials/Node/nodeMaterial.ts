@@ -57,7 +57,7 @@ import { TrigonometryBlock, TrigonometryBlockOperations } from "./Blocks/trigono
 import { NodeMaterialSystemValues } from "./Enums/nodeMaterialSystemValues";
 import type { ImageSourceBlock } from "./Blocks/Dual/imageSourceBlock";
 import { EngineStore } from "../../Engines/engineStore";
-import type { Material } from "../material";
+import { Material } from "../material";
 import type { TriPlanarBlock } from "./Blocks/triPlanarBlock";
 import type { BiPlanarBlock } from "./Blocks/biPlanarBlock";
 import type { PrePassRenderer } from "../../Rendering/prePassRenderer";
@@ -298,6 +298,9 @@ export class NodeMaterial extends PushMaterial {
     /** Gets or sets a boolean indicating that node materials should not deserialize textures from json / snippet content */
     public static IgnoreTexturesAtLoadTime = false;
 
+    /** Gets or sets a boolean indicating that render target textures can be serialized */
+    public static AllowSerializationOfRenderTargetTextures = false;
+
     /** Defines default shader language when no option is defined */
     public static DefaultShaderLanguage = ShaderLanguage.GLSL;
 
@@ -327,6 +330,11 @@ export class NodeMaterial extends PushMaterial {
     }
 
     private BJSNODEMATERIALEDITOR = this._getGlobalNodeMaterialEditor();
+
+    /** Gets whether the node material is currently building */
+    public get buildIsInProgress(): boolean {
+        return this._buildIsInProgress;
+    }
 
     /** @internal */
     public _useAdditionalColor = false;
@@ -1035,8 +1043,8 @@ export class NodeMaterial extends PushMaterial {
 
         this._buildIsInProgress = false;
         if (noError) {
-            this.onBuildObservable.notifyObservers(this);
             this._buildWasSuccessful = true;
+            this.onBuildObservable.notifyObservers(this);
         }
 
         // Wipe defines
@@ -2353,7 +2361,6 @@ export class NodeMaterial extends PushMaterial {
     public override serialize(selectedBlocks?: NodeMaterialBlock[]): any {
         const serializationObject = selectedBlocks ? {} : SerializationHelper.Serialize(this);
         serializationObject.editorData = JSON.parse(JSON.stringify(this.editorData)); // Copy
-        serializationObject.alphaMode = this._alphaMode;
 
         let blocks: NodeMaterialBlock[] = [];
 
@@ -2521,21 +2528,7 @@ export class NodeMaterial extends PushMaterial {
             this.editorData.map = blockMap;
         }
 
-        this.comment = source.comment;
-
-        if (source.forceAlphaBlending !== undefined) {
-            this.forceAlphaBlending = source.forceAlphaBlending;
-        }
-
-        if (source.alphaMode !== undefined) {
-            this.alphaMode = source.alphaMode;
-        }
-
-        if (!Array.isArray(source.alphaMode)) {
-            this._alphaMode = [source.alphaMode ?? Constants.ALPHA_COMBINE];
-        } else {
-            this._alphaMode = source.alphaMode;
-        }
+        Material.ParseAlphaMode(source, this);
 
         if (!merge) {
             this._mode = source.mode ?? NodeMaterialModes.Material;
@@ -2550,6 +2543,7 @@ export class NodeMaterial extends PushMaterial {
      * @deprecated Please use the parseSerializedObject method instead
      */
     public loadFromSerialization(source: any, rootUrl: string = "", merge = false) {
+        SerializationHelper.ParseProperties(source, this, this.getScene(), rootUrl);
         this.parseSerializedObject(source, rootUrl, merge);
     }
 

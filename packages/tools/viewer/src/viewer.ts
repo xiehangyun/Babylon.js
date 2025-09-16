@@ -183,11 +183,9 @@ async function createCubeTexture(url: string, scene: Scene, extension?: string) 
     extension = extension ?? GetExtensionFromUrl(url);
     const instantiateTexture = await (async () => {
         if (extension === ".hdr") {
-            // eslint-disable-next-line @typescript-eslint/naming-convention
             const { HDRCubeTexture } = await import("core/Materials/Textures/hdrCubeTexture");
             return () => new HDRCubeTexture(url, scene, 256, false, true, false, true, undefined, undefined, undefined, true, true);
         } else {
-            // eslint-disable-next-line @typescript-eslint/naming-convention
             const { CubeTexture } = await import("core/Materials/Textures/cubeTexture");
             return () => new CubeTexture(url, scene, null, false, null, null, null, undefined, true, extension, true);
         }
@@ -1812,8 +1810,6 @@ export class Viewer implements IDisposable {
         high.pipeline.resetAccumulation();
         // shadow map
         this._shadowState.normal?.ground.setEnabled(false);
-        high.pipeline.toggleShadow(true);
-        high.ground.setEnabled(true);
         this._startIblShadowsRenderTime();
 
         this._shadowState.high = high;
@@ -1919,6 +1915,11 @@ export class Viewer implements IDisposable {
                 },
                 refreshLightPositionDirection(reflectionRotation: number) {
                     let effectiveSourceDir = this.iblDirection.direction.normalizeToNew();
+
+                    if (this.light.getScene().useRightHandedSystem) {
+                        effectiveSourceDir.z *= -1;
+                    }
+
                     const rotationYMatrix = Matrix.RotationY(reflectionRotation * -1);
                     effectiveSourceDir = Vector3.TransformCoordinates(effectiveSourceDir, rotationYMatrix);
 
@@ -2753,7 +2754,7 @@ export class Viewer implements IDisposable {
         updateSkybox(this._skybox, this._camera);
     }
 
-    private _updateLight() {
+    protected _updateLight() {
         let shouldHaveDefaultLight: boolean;
         if (this._loadedModels.length === 0) {
             shouldHaveDefaultLight = false;

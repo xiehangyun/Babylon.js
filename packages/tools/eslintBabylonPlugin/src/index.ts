@@ -6,6 +6,8 @@ import { TSDocConfiguration, TSDocParser, TextRange } from "@microsoft/tsdoc";
 import * as tsdoc from "@microsoft/tsdoc";
 import type { TSDocConfigFile } from "@microsoft/tsdoc-config";
 import * as ts from "typescript";
+import * as fs from "fs";
+import * as path from "path";
 
 // import { Debug } from "./Debug";
 import { ConfigCache } from "./ConfigCache";
@@ -139,6 +141,84 @@ function walkCompilerAstAndFindComments(node: ts.Node, indent: string, notFoundC
     }
 
     return node.forEachChild((child) => walkCompilerAstAndFindComments(child, indent + "  ", notFoundComments, sourceText, getterSetterFound));
+}
+
+type TsConfig = {
+    compilerOptions: {
+        baseUrl: string;
+        paths: Record<string, string[]>;
+    };
+};
+
+let tsConfig: TsConfig | null = null;
+function loadTsConfig(projectRoot: string): TsConfig | null {
+    if (tsConfig) {
+        return tsConfig;
+    }
+
+    try {
+        const tsconfigPath = path.join(projectRoot, "tsconfig.json");
+        const tsconfigContent = fs.readFileSync(tsconfigPath, "utf8");
+        // Remove comments and parse JSON
+        const cleanJson = tsconfigContent.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+        tsConfig = JSON.parse(cleanJson);
+    } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn(`BabylonJS custom eslint plugin failed to load tsconfig.json: ${error.message}`);
+    }
+
+    return tsConfig;
+}
+
+function shouldUsePathMapping(projectRoot: string, importPath: string, filename: string, tsConfig: TsConfig) {
+    if (!importPath.startsWith("../") || !tsConfig?.compilerOptions?.paths) {
+        return null;
+    }
+
+    const { baseUrl = ".", paths } = tsConfig.compilerOptions;
+
+    // Tries to match the file path against the path mappings from the tsconfig
+    const findPathInfo = (filename: string) => {
+        // Check if this resolved path matches any of the path mappings
+        for (const [pathKey, pathValues] of Object.entries(paths)) {
+            for (const pathValue of pathValues) {
+                // Convert tsconfig path to absolute path
+                const absolutePackageRoot = path.resolve(projectRoot, baseUrl, pathValue).replace("*", "");
+
+                // Check if the resolved import matches this path mapping
+                if (filename.startsWith(absolutePackageRoot)) {
+                    return { pathKey, absolutePackageRoot } as const;
+                }
+            }
+        }
+
+        return null;
+    };
+
+    // Resolve the relative import to an absolute path
+    const resolvedImportPath = path.resolve(path.dirname(filename), importPath);
+
+    // Try to find a path mapping for the file in question
+    const filePathInfo = findPathInfo(filename);
+
+    // Try to find a path mapping for the import in question
+    const importPathInfo = findPathInfo(resolvedImportPath);
+
+    // If the pathKeys are the same, it means it is a relative import within the same project/package, which is ok.
+    // Otherwise though, the relative path should be replaced with a mapped path.
+    if (filePathInfo && importPathInfo && filePathInfo.pathKey !== importPathInfo.pathKey) {
+        // Calculate what the import should be
+        const relativePart = path.relative(importPathInfo.absolutePackageRoot, resolvedImportPath);
+
+        const suggestedImport = importPathInfo.pathKey
+            .replace("*", relativePart)
+            .replace(/\\/g, "/") // Normalize to forward slashes
+            .replace(/\.(ts|tsx)$/, ""); // Remove extension
+
+        return suggestedImport;
+    }
+
+    return null;
 }
 
 const plugin: IPlugin = {
@@ -385,6 +465,49 @@ const plugin: IPlugin = {
 
                 return {
                     Program: checkCommentBlocks,
+                };
+            },
+        },
+        "no-cross-package-relative-imports": {
+            meta: {
+                type: "problem",
+                docs: {
+                    description: "Prevent relative imports that should use TypeScript path mappings",
+                },
+                fixable: "code",
+                messages: {
+                    usePathMapping: 'Use path mapping "{{suggestion}}" instead of relative import "{{importPath}}".',
+                },
+            },
+            create(context) {
+                const filename = context.filename;
+                const projectRoot = filename.split("packages")[0];
+                return {
+                    Program() {
+                        // Load tsconfig (it will only be loaded upon first request).
+                        tsConfig = loadTsConfig(projectRoot);
+                    },
+
+                    ImportDeclaration(node) {
+                        const importPath = node.source.value as string;
+                        const filename = context.filename;
+
+                        const suggestion = shouldUsePathMapping(projectRoot, importPath, filename, tsConfig!);
+
+                        if (suggestion) {
+                            context.report({
+                                node,
+                                messageId: "usePathMapping",
+                                data: {
+                                    importPath,
+                                    suggestion,
+                                },
+                                fix(fixer) {
+                                    return fixer.replaceText(node.source, `"${suggestion}"`);
+                                },
+                            });
+                        }
+                    },
                 };
             },
         },

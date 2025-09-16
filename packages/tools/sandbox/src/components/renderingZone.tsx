@@ -38,7 +38,6 @@ function IsTextureAsset(extension: string): boolean {
         case "png":
         case "jpg":
         case "jpeg":
-        case "exr":
         case "webp": {
             return true;
         }
@@ -140,6 +139,7 @@ export class RenderingZone extends React.Component<IRenderingZoneProps> {
                 switch (extension.toLowerCase()) {
                     case "dds":
                     case "env":
+                    case "exr":
                     case "hdr": {
                         FilesInput.FilesToLoad[name] = file;
                         EnvironmentTools.SkyboxPath = "file:" + (file as any).correctName;
@@ -417,8 +417,7 @@ export class RenderingZone extends React.Component<IRenderingZoneProps> {
                 const loader = plugin as GLTFFileLoader;
                 loader.transparencyAsCoverage = this.props.globalState.commerceMode;
 
-                // Disable validation temporarily until Chrome 139 is in stable release due to https://issues.chromium.org/issues/419503126
-                loader.validate = false;
+                loader.validate = true;
 
                 loader.onExtensionLoadedObservable.add((extension: import("loaders/glTF/index").IGLTFLoaderExtension) => {
                     this.props.globalState.glTFLoaderExtensions[extension.name] = extension;
